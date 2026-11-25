@@ -1,0 +1,18 @@
+[package]
+name = "isyntax"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "Apache-2.0"
+description = "Philips iSyntax whole-slide image decoder. Rust port of github.com/dobbo-ca/isyntax-go."
+publish = false
+exclude = ["tests/parity", "tests/fuzz", ".github"]
+
+[dependencies]
+# The worker pool (see docs/threading.md, Dependencies): safe Rust cannot reuse a thread for jobs that
+# borrow short-lived buffers, and rayon's scope can. Default features, as jpeg-rs.
+rayon = "=1.12.0"
+
+# The tests decode tiles and sweep whole levels; keep them fast but keep the overflow checks.
+[profile.test]
+opt-level = 2

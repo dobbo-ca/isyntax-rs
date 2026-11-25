@@ -1,0 +1,151 @@
+//go:build !purego
+
+#include "textflag.h"
+
+// Halving add, see reference/performance.md.
+TEXT ·liftOddNEON(SB), NOSPLIT, $0-40
+	MOVD out+0(FP), R0
+	MOVD l+8(FP), R1
+	MOVD h0+16(FP), R2
+	MOVD h1+24(FP), R3
+	MOVD n+32(FP), R4
+oloop:
+	VLD1.P 16(R1), [V0.H8]
+	VLD1.P 16(R2), [V1.H8]
+	VLD1.P 16(R3), [V2.H8]
+	VSHADD V2.H8, V1.H8, V3.H8
+	VSRSHR $1, V3.H8, V3.H8
+	VSUB   V3.H8, V0.H8, V0.H8
+	VST1.P [V0.H8], 16(R0)
+	SUBS $8, R4
+	BNE  oloop
+	RET
+
+// Mirrors liftOddNEON without the rounding step.
+TEXT ·liftEvenNEON(SB), NOSPLIT, $0-40
+	MOVD out+0(FP), R0
+	MOVD h+8(FP), R1
+	MOVD o0+16(FP), R2
+	MOVD o1+24(FP), R3
+	MOVD n+32(FP), R4
+eloop:
+	VLD1.P 16(R1), [V0.H8]
+	VLD1.P 16(R2), [V1.H8]
+	VLD1.P 16(R3), [V2.H8]
+	VSHADD V2.H8, V1.H8, V3.H8
+	VADD   V3.H8, V0.H8, V0.H8
+	VST1.P [V0.H8], 16(R0)
+	SUBS $8, R4
+	BNE  eloop
+	RET
+
+// VZIP1/2 do the interleave.
+TEXT ·interleaveNEON(SB), NOSPLIT, $0-32
+	MOVD out+0(FP), R0
+	MOVD e+8(FP), R1
+	MOVD d+16(FP), R2
+	MOVD n+24(FP), R4
+iloop:
+	VLD1.P 16(R1), [V0.H8]
+	VLD1.P 16(R2), [V1.H8]
+	VZIP1  V1.H8, V0.H8, V2.H8
+	VZIP2  V1.H8, V0.H8, V3.H8
+	VST1.P [V2.H8, V3.H8], 32(R0)
+	SUBS $8, R4
+	BNE  iloop
+	RET
+
+// VSQXTUN narrows with the [0,255] clamp.
+TEXT ·ycocgNEON(SB), NOSPLIT, $0-41
+	MOVD dst+0(FP), R0
+	MOVD y+8(FP), R1
+	MOVD co+16(FP), R2
+	MOVD cg+24(FP), R3
+	MOVD n+32(FP), R4
+	MOVBU shift1+40(FP), R5
+	VMOVI $255, V19.B8
+cloop:
+	VLD1.P 16(R1), [V0.H8]
+	VLD1.P 16(R2), [V1.H8]
+	VLD1.P 16(R3), [V2.H8]
+	VSSHR $1, V2.H8, V3.H8
+	VSUB  V3.H8, V0.H8, V4.H8
+	VADD  V2.H8, V4.H8, V5.H8
+	VSSHR $1, V1.H8, V3.H8
+	VSUB  V3.H8, V4.H8, V6.H8
+	VADD  V1.H8, V6.H8, V7.H8
+	CBZ   R5, noshift
+	VSSHR $1, V7.H8, V7.H8
+	VSSHR $1, V5.H8, V5.H8
+	VSSHR $1, V6.H8, V6.H8
+noshift:
+	VSQXTUN V7.H8, V16.B8
+	VSQXTUN V5.H8, V17.B8
+	VSQXTUN V6.H8, V18.B8
+	VST4.P [V16.B8, V17.B8, V18.B8, V19.B8], 32(R0)
+	SUBS $8, R4
+	BNE  cloop
+	RET
+
+// VABS wraps at -32768 like Go.
+TEXT ·truncNEON(SB), NOSPLIT, $0-20
+	MOVD  p+0(FP), R0
+	MOVD  n+8(FP), R4
+	MOVHU mask+16(FP), R1
+	MOVHU o+18(FP), R2
+	VDUP  R1, V30.H8
+	VDUP  R2, V31.H8
+tloop:
+	VLD1   (R0), [V0.H8]
+	VABS   V0.H8, V1.H8
+	VBIC   V30.B16, V1.B16, V1.B16
+	VCMTST V1.H8, V1.H8, V2.H8
+	VAND   V31.B16, V2.B16, V2.B16
+	VADD   V2.H8, V1.H8, V1.H8
+	VSSHR  $15, V0.H8, V3.H8
+	VEOR   V3.B16, V1.B16, V1.B16
+	VSUB   V3.H8, V1.H8, V1.H8
+	VST1.P [V1.H8], 16(R0)
+	SUBS $8, R4
+	BNE  tloop
+	RET
+
+// VST3 does the interleave.
+TEXT ·samplesNEON(SB), NOSPLIT, $0-45
+	MOVD  dst+0(FP), R0
+	MOVD  a+8(FP), R1
+	MOVD  b+16(FP), R2
+	MOVD  c+24(FP), R3
+	MOVD  n+32(FP), R4
+	MOVH  lo+40(FP), R7
+	MOVH  hi+42(FP), R5
+	MOVBU planes+44(FP), R6
+	VDUP  R7, V21.H8
+	VDUP  R5, V20.H8
+sloop:
+	CBZ    R6, ycocg
+	VLD1.P 16(R1), [V7.H8]
+	VLD1.P 16(R2), [V5.H8]
+	VLD1.P 16(R3), [V6.H8]
+	B      clamp
+ycocg:
+	VLD1.P 16(R1), [V0.H8]
+	VLD1.P 16(R2), [V1.H8]
+	VLD1.P 16(R3), [V2.H8]
+	VSSHR $1, V2.H8, V3.H8
+	VSUB  V3.H8, V0.H8, V4.H8
+	VADD  V2.H8, V4.H8, V5.H8
+	VSSHR $1, V1.H8, V3.H8
+	VSUB  V3.H8, V4.H8, V6.H8
+	VADD  V1.H8, V6.H8, V7.H8
+clamp:
+	VSMAX  V21.H8, V7.H8, V16.H8
+	VSMAX  V21.H8, V5.H8, V17.H8
+	VSMAX  V21.H8, V6.H8, V18.H8
+	VSMIN  V20.H8, V16.H8, V16.H8
+	VSMIN  V20.H8, V17.H8, V17.H8
+	VSMIN  V20.H8, V18.H8, V18.H8
+	VST3.P [V16.H8, V17.H8, V18.H8], 48(R0)
+	SUBS $8, R4
+	BNE  sloop
+	RET

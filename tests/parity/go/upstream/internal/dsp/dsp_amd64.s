@@ -1,0 +1,241 @@
+//go:build !purego
+
+#include "textflag.h"
+
+TEXT ·cpuid(SB), NOSPLIT, $0-24
+	MOVL eaxArg+0(FP), AX
+	MOVL ecxArg+4(FP), CX
+	CPUID
+	MOVL AX, eax+8(FP)
+	MOVL BX, ebx+12(FP)
+	MOVL CX, ecx+16(FP)
+	MOVL DX, edx+20(FP)
+	RET
+
+TEXT ·xgetbv(SB), NOSPLIT, $0-8
+	MOVL $0, CX
+	XGETBV
+	MOVL AX, eax+0(FP)
+	MOVL DX, edx+4(FP)
+	RET
+
+// Halving add, see reference/performance.md.
+TEXT ·liftOddAVX2(SB), NOSPLIT, $0-40
+	MOVQ out+0(FP), DI
+	MOVQ l+8(FP), SI
+	MOVQ h0+16(FP), BX
+	MOVQ h1+24(FP), CX
+	MOVQ n+32(FP), DX
+oloop:
+	VMOVDQU (SI), Y0
+	VMOVDQU (BX), Y1
+	VMOVDQU (CX), Y2
+	VPAND   Y1, Y2, Y3
+	VPXOR   Y1, Y2, Y4
+	VPSRAW  $1, Y4, Y4
+	VPADDW  Y4, Y3, Y3
+	VPSRAW  $1, Y3, Y4
+	VPSUBW  Y4, Y3, Y3
+	VPSUBW  Y3, Y0, Y0
+	VMOVDQU Y0, (DI)
+	ADDQ $32, SI
+	ADDQ $32, BX
+	ADDQ $32, CX
+	ADDQ $32, DI
+	SUBQ $16, DX
+	JNZ  oloop
+	VZEROUPPER
+	RET
+
+// Mirrors liftOddAVX2 without the rounding step.
+TEXT ·liftEvenAVX2(SB), NOSPLIT, $0-40
+	MOVQ out+0(FP), DI
+	MOVQ h+8(FP), SI
+	MOVQ o0+16(FP), BX
+	MOVQ o1+24(FP), CX
+	MOVQ n+32(FP), DX
+eloop:
+	VMOVDQU (SI), Y0
+	VMOVDQU (BX), Y1
+	VMOVDQU (CX), Y2
+	VPAND   Y1, Y2, Y3
+	VPXOR   Y1, Y2, Y4
+	VPSRAW  $1, Y4, Y4
+	VPADDW  Y4, Y3, Y3
+	VPADDW  Y3, Y0, Y0
+	VMOVDQU Y0, (DI)
+	ADDQ $32, SI
+	ADDQ $32, BX
+	ADDQ $32, CX
+	ADDQ $32, DI
+	SUBQ $16, DX
+	JNZ  eloop
+	VZEROUPPER
+	RET
+
+// Unpack, then fix cross-lane order.
+TEXT ·interleaveAVX2(SB), NOSPLIT, $0-32
+	MOVQ out+0(FP), DI
+	MOVQ e+8(FP), SI
+	MOVQ d+16(FP), BX
+	MOVQ n+24(FP), DX
+iloop:
+	VMOVDQU    (SI), Y0
+	VMOVDQU    (BX), Y1
+	VPUNPCKLWD Y1, Y0, Y2
+	VPUNPCKHWD Y1, Y0, Y3
+	VPERM2I128 $0x20, Y3, Y2, Y4
+	VPERM2I128 $0x31, Y3, Y2, Y5
+	VMOVDQU    Y4, (DI)
+	VMOVDQU    Y5, 32(DI)
+	ADDQ $32, SI
+	ADDQ $32, BX
+	ADDQ $64, DI
+	SUBQ $16, DX
+	JNZ  iloop
+	VZEROUPPER
+	RET
+
+// VPACKUSWB saturates to [0,255].
+TEXT ·ycocgAVX2(SB), NOSPLIT, $0-41
+	MOVQ    dst+0(FP), DI
+	MOVQ    y+8(FP), SI
+	MOVQ    co+16(FP), BX
+	MOVQ    cg+24(FP), CX
+	MOVQ    n+32(FP), DX
+	MOVBQZX shift1+40(FP), R8
+	VPCMPEQW Y15, Y15, Y15
+	VPSRLW   $8, Y15, Y15
+cloop:
+	VMOVDQU (SI), Y0
+	VMOVDQU (BX), Y1
+	VMOVDQU (CX), Y2
+	VPSRAW  $1, Y2, Y3
+	VPSUBW  Y3, Y0, Y4
+	VPADDW  Y2, Y4, Y5
+	VPSRAW  $1, Y1, Y3
+	VPSUBW  Y3, Y4, Y6
+	VPADDW  Y1, Y6, Y7
+	TESTQ R8, R8
+	JZ    noshift
+	VPSRAW $1, Y7, Y7
+	VPSRAW $1, Y5, Y5
+	VPSRAW $1, Y6, Y6
+noshift:
+	VPACKUSWB  Y6, Y7, Y8
+	VPACKUSWB  Y15, Y5, Y9
+	VPUNPCKLBW Y9, Y8, Y10
+	VPUNPCKHBW Y9, Y8, Y11
+	VPUNPCKLWD Y11, Y10, Y12
+	VPUNPCKHWD Y11, Y10, Y13
+	VPERM2I128 $0x20, Y13, Y12, Y0
+	VPERM2I128 $0x31, Y13, Y12, Y1
+	VMOVDQU    Y0, (DI)
+	VMOVDQU    Y1, 32(DI)
+	ADDQ $32, SI
+	ADDQ $32, BX
+	ADDQ $32, CX
+	ADDQ $64, DI
+	SUBQ $16, DX
+	JNZ  cloop
+	VZEROUPPER
+	RET
+
+// VPABSW and VPSIGNW wrap at -32768 like Go.
+TEXT ·truncAVX2(SB), NOSPLIT, $0-20
+	MOVQ    p+0(FP), DI
+	MOVQ    n+8(FP), DX
+	MOVWLZX mask+16(FP), AX
+	MOVQ    AX, X15
+	VPBROADCASTW X15, Y15
+	MOVWLZX o+18(FP), AX
+	MOVQ    AX, X14
+	VPBROADCASTW X14, Y14
+	VPXOR   Y13, Y13, Y13
+tloop:
+	VMOVDQU  (DI), Y0
+	VPABSW   Y0, Y1
+	VPANDN   Y1, Y15, Y1
+	VPCMPEQW Y13, Y1, Y2
+	VPANDN   Y14, Y2, Y2
+	VPADDW   Y2, Y1, Y1
+	VPSIGNW  Y0, Y1, Y1
+	VMOVDQU  Y1, (DI)
+	ADDQ $32, DI
+	SUBQ $16, DX
+	JNZ  tloop
+	VZEROUPPER
+	RET
+
+// Word orders that put each channel at its RGB slots, see samplesAVX2.
+DATA samplesShufR<>+0(SB)/8, $0x03020D0C07060100
+DATA samplesShufR<>+8(SB)/8, $0x0B0A05040F0E0908
+GLOBL samplesShufR<>(SB), RODATA|NOPTR, $16
+DATA samplesShufG<>+0(SB)/8, $0x0D0C070601000B0A
+DATA samplesShufG<>+8(SB)/8, $0x05040F0E09080302
+GLOBL samplesShufG<>(SB), RODATA|NOPTR, $16
+DATA samplesShufB<>+0(SB)/8, $0x070601000B0A0504
+DATA samplesShufB<>+8(SB)/8, $0x0F0E090803020D0C
+GLOBL samplesShufB<>(SB), RODATA|NOPTR, $16
+
+// Per 128-bit lane: shuffle R, G, B so each output vector is
+// two blends of them, then regroup the lanes.
+TEXT ·samplesAVX2(SB), NOSPLIT, $0-45
+	MOVQ    dst+0(FP), DI
+	MOVQ    a+8(FP), SI
+	MOVQ    b+16(FP), BX
+	MOVQ    c+24(FP), CX
+	MOVQ    n+32(FP), DX
+	VPBROADCASTW lo+40(FP), Y14
+	VPBROADCASTW hi+42(FP), Y15
+	MOVBQZX planes+44(FP), R8
+	VBROADCASTI128 samplesShufR<>(SB), Y13
+	VBROADCASTI128 samplesShufG<>(SB), Y12
+	VBROADCASTI128 samplesShufB<>(SB), Y11
+sloop:
+	TESTQ R8, R8
+	JZ    ycocg
+	VMOVDQU (SI), Y7
+	VMOVDQU (BX), Y5
+	VMOVDQU (CX), Y6
+	JMP     clamp
+ycocg:
+	VMOVDQU (SI), Y0
+	VMOVDQU (BX), Y1
+	VMOVDQU (CX), Y2
+	VPSRAW  $1, Y2, Y3
+	VPSUBW  Y3, Y0, Y4
+	VPADDW  Y2, Y4, Y5
+	VPSRAW  $1, Y1, Y3
+	VPSUBW  Y3, Y4, Y6
+	VPADDW  Y1, Y6, Y7
+clamp:
+	VPMAXSW Y14, Y7, Y7
+	VPMAXSW Y14, Y5, Y5
+	VPMAXSW Y14, Y6, Y6
+	VPMINSW Y15, Y7, Y7
+	VPMINSW Y15, Y5, Y5
+	VPMINSW Y15, Y6, Y6
+	VPSHUFB Y13, Y7, Y8
+	VPSHUFB Y12, Y5, Y9
+	VPSHUFB Y11, Y6, Y10
+	VPBLENDW   $0x92, Y9, Y8, Y0
+	VPBLENDW   $0x24, Y10, Y0, Y0
+	VPBLENDW   $0x92, Y8, Y10, Y1
+	VPBLENDW   $0x24, Y9, Y1, Y1
+	VPBLENDW   $0x92, Y10, Y9, Y2
+	VPBLENDW   $0x24, Y8, Y2, Y2
+	VPERM2I128 $0x20, Y1, Y0, Y3
+	VPERM2I128 $0x30, Y0, Y2, Y4
+	VPERM2I128 $0x31, Y2, Y1, Y7
+	VMOVDQU    Y3, (DI)
+	VMOVDQU    Y4, 32(DI)
+	VMOVDQU    Y7, 64(DI)
+	ADDQ $32, SI
+	ADDQ $32, BX
+	ADDQ $32, CX
+	ADDQ $96, DI
+	SUBQ $16, DX
+	JNZ  sloop
+	VZEROUPPER
+	RET

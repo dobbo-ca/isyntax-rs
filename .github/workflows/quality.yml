@@ -1,0 +1,38 @@
+name: quality
+on: { workflow_dispatch: {}, push: { branches: [main] } }
+permissions:
+  contents: read
+# A new run waits for the one before it; it does not cancel it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  # Not a required check. Quality gate, byte-exact: the OpenSlide
+  # set has no iSyntax file, so the files are the parity corpus (the six bench fixtures and the 24
+  # largest non-mutant inputs of `oracle -gen`). Go (the oracle, -ppm) and isyntax-rs decode every tile
+  # of every level of each; the P6 files must be byte-identical. The report (summary.md, diff.txt)
+  # is the artifact quality-exact.
+  exact:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { lfs: false, persist-credentials: false }
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: .github/ci/Dockerfile
+          target: quality-report
+          push: false
+          outputs: type=local,dest=quality-out
+          cache-from: type=gha,scope=isyntax-rs-quality
+          cache-to: type=gha,mode=max,scope=isyntax-rs-quality
+      - if: always()
+        run: cat quality-out/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: quality-exact
+          path: quality-out
+      - run: exit "$(cat quality-out/status)"

@@ -1,0 +1,50 @@
+[package]
+name = "isyntax-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+isyntax = { path = "../.." }
+
+# Not part of the root package: only this crate may depend on libfuzzer-sys.
+[workspace]
+
+[[bin]]
+name = "open"
+path = "fuzz_targets/open.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode"
+path = "fuzz_targets/decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "hulsken"
+path = "fuzz_targets/hulsken.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tables"
+path = "fuzz_targets/tables.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "kernels"
+path = "fuzz_targets/kernels.rs"
+test = false
+doc = false
+bench = false
