@@ -555,8 +555,22 @@ mod tests {
         assert!(all.contains(&crate::simd::tier()));
     }
 
+    /// Also logs the tier in use (`--nocapture`), so a CI log shows what the run tested.
     #[test]
     fn the_simd_tier_is_detected() {
+        eprintln!(
+            "SIMD tier: {:?}, AVX-512 kernels: {}",
+            crate::simd::tier(),
+            crate::simd::avx512_kernels()
+        );
+        if std::env::var_os("ISYNTAX_SIMD").is_some_and(|v| v == "avx512") {
+            assert!(
+                crate::simd::avx512_kernels(),
+                "ISYNTAX_SIMD=avx512, but no AVX-512 kernels"
+            );
+            #[cfg(target_arch = "x86_64")]
+            assert_eq!(crate::simd::tier(), crate::simd::Tier::Avx512);
+        }
         assert_eq!(crate::simd::tier(), expected_tier());
     }
 

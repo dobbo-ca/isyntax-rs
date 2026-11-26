@@ -1,5 +1,6 @@
 //! SIMD tiers for the sample kernels of `dsp`: AVX-512 or AVX2 on x86_64, NEON on aarch64, picked
-//! once. `ISYNTAX_SIMD=scalar` forces the scalar tier and `ISYNTAX_SIMD=avx2` the AVX2 tier. A
+//! once. `ISYNTAX_SIMD=scalar` forces the scalar tier and `ISYNTAX_SIMD=avx2` the AVX2 tier;
+//! `ISYNTAX_SIMD=avx512` panics unless the AVX-512 kernels (F, BW, GFNI) run here. A
 //! kernel without an AVX-512 version runs its AVX2 one on the AVX-512 tier. Each kernel here
 //! handles the whole-lane prefix of its input and returns how many elements (or, for `idwt_row`,
 //! row positions) it did; the caller finishes the tail with the scalar code, which is also the oracle in the tests.
@@ -42,8 +43,23 @@ pub(crate) fn available() -> Vec<Tier> {
     v
 }
 
+/// Whether every AVX-512 kernel runs here (AVX2, F, BW and GFNI for the unpack): false on a
+/// target without them.
+pub(crate) fn avx512_kernels() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        available().contains(&Tier::Avx512) && is_x86_feature_detected!("gfni")
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        false
+    }
+}
+
 /// The tier every kernel runs on: the best this CPU has, or the one `ISYNTAX_SIMD` (`scalar` or
-/// `avx2`) names if the CPU has it.
+/// `avx2`) names if the CPU has it. `ISYNTAX_SIMD=avx512` requires the AVX-512 kernels (for CI
+/// under an emulator): it panics on a CPU without them, so a test run cannot fall back to AVX2
+/// without a word.
 pub(crate) fn tier() -> Tier {
     static TIER: OnceLock<Tier> = OnceLock::new();
     *TIER.get_or_init(|| {
@@ -52,6 +68,13 @@ pub(crate) fn tier() -> Tier {
             Some(v) if v == "scalar" => Some(Tier::Scalar),
             #[cfg(target_arch = "x86_64")]
             Some(v) if v == "avx2" => Some(Tier::Avx2),
+            Some(v) if v == "avx512" => {
+                assert!(
+                    avx512_kernels(),
+                    "ISYNTAX_SIMD=avx512, but this CPU lacks AVX-512 F, BW and GFNI"
+                );
+                None
+            }
             _ => None,
         };
         match forced {

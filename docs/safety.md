@@ -10,13 +10,16 @@ aarch64, ported from Go's `dsp_amd64.s` and `dsp_arm64.s`. On x86_64 there is al
 (F and BW, 32 int16 lanes, `src/simd/avx512.rs`), which Go does not have. The tier is detected
 once at first use. It is the best the CPU has: AVX-512 if `avx2`, `avx512f` and `avx512bw` are all
 present, else AVX2, else scalar. `ISYNTAX_SIMD=scalar` forces the scalar tier and
-`ISYNTAX_SIMD=avx2` the AVX2 one (on a CPU without it, scalar); any other value, or none, picks
+`ISYNTAX_SIMD=avx2` the AVX2 one (on a CPU without it, scalar); `ISYNTAX_SIMD=avx512` panics on a
+CPU without AVX-512 F, BW and GFNI (for CI under an emulator); any other value, or none, picks
 the best. The tier is chosen per kernel: on the AVX-512 tier a kernel without an AVX-512 version
 runs its AVX2 version (one word in the dispatch table of `src/simd.rs`). Every tier is bit-exact with
 scalar; the unit tests compare each tier the CPU has with scalar on random and edge data, assert
 that AVX2 was detected, and expect the AVX-512 tier when the CPU has AVX-512 F and BW. CI runs the
 suite on x86_64 under the default tier, `ISYNTAX_SIMD=scalar` and `ISYNTAX_SIMD=avx2`, and the
-`dsp::` tests natively on aarch64.
+`dsp::` tests natively on aarch64. The AVX-512 kernels (F, BW, GFNI) run under Intel SDE in the
+`avx512-sde` job (the unit tests on `-spr` with `ISYNTAX_SIMD=avx512`, which fails on a CPU
+without AVX-512), and natively when the hosted runner has AVX-512.
 Unlike Go, the kernels take any shift (not only 0 and 1).
 
 The AVX-512 kernels are `lift_even`, `idwt_row`, `ycocg_to_rgba` and `samples` (the RGB16 and
