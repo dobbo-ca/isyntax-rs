@@ -32,7 +32,8 @@ RUN --mount=type=cache,id=isyntax-cargo-registry,target=/usr/local/cargo/registr
 RUN --mount=type=cache,id=isyntax-cargo-registry,target=/usr/local/cargo/registry --mount=type=cache,id=isyntax-target,target=/src/target \
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
 RUN --mount=type=cache,id=isyntax-cargo-registry,target=/usr/local/cargo/registry --mount=type=cache,id=isyntax-target,target=/src/target \
-    cargo test --locked
+    cargo test --locked \
+    && cargo test --locked --lib -- --nocapture the_simd_tier_is_detected
 RUN --mount=type=cache,id=isyntax-cargo-registry,target=/usr/local/cargo/registry --mount=type=cache,id=isyntax-target,target=/src/target \
     ISYNTAX_SIMD=scalar cargo test --locked
 # The x86-64-v4 build (docs/performance.md, the bench's v4 column) must give the same bytes as the
@@ -55,7 +56,8 @@ RUN --mount=type=cache,id=isyntax-cargo-registry,target=/usr/local/cargo/registr
 # aarch64 is the parity-arm64 stage.
 FROM src AS arm64
 RUN --mount=type=cache,id=isyntax-cargo-registry,target=/usr/local/cargo/registry --mount=type=cache,id=isyntax-target,target=/src/target \
-    cargo test --locked --lib dsp::
+    cargo test --locked --lib dsp:: \
+    && cargo test --locked --lib dsp:: -- --nocapture the_simd_tier_is_detected
 RUN --mount=type=cache,id=isyntax-cargo-registry,target=/usr/local/cargo/registry --mount=type=cache,id=isyntax-target,target=/src/target \
     ISYNTAX_SIMD=scalar cargo test --locked --lib dsp::
 
